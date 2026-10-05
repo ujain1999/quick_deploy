@@ -184,13 +184,13 @@ networks:
     services = compose_config(src, "compose.yml")["services"]
     svc, port = pick_service(services, None, None)
     assert (svc, port) == ("web", 3000)
-    (tmp_path / "qd.override.yml").write_text(compose_override(services, svc, port, "blog", "isalive.win"))
+    (tmp_path / "qd.override.yml").write_text(compose_override(services, svc, port, "blog", "example.com"))
 
     merged = compose_config(tmp_path, "src/compose.yml", "qd.override.yml")["services"]
     web, db = merged["web"], merged["db"]
     assert not web.get("ports") and not db.get("ports")
     assert web["labels"]["user.label"] == "kept"
-    assert web["labels"]["traefik.http.routers.qd-blog.rule"] == "Host(`blog.isalive.win`)"
+    assert web["labels"]["traefik.http.routers.qd-blog.rule"] == "Host(`blog.example.com`)"
     assert web["labels"]["traefik.http.services.qd-blog.loadbalancer.server.port"] == "3000"
     assert set(web["networks"]) == {"default", "qd"}
     assert set(db["networks"]) == {"backend"}
@@ -212,7 +212,7 @@ def test_dockerfile_compose_is_valid(tmp_path: Path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "Dockerfile").write_text("FROM nginx\n")
     (tmp_path / "src" / ".env").write_text("FOO=bar\n")
-    (tmp_path / "qd.compose.yml").write_text(dockerfile_compose("blog", "isalive.win", "Dockerfile", 80, True))
+    (tmp_path / "qd.compose.yml").write_text(dockerfile_compose("blog", "example.com", "Dockerfile", 80, True))
     app = compose_config(tmp_path, "qd.compose.yml")["services"]["app"]
     assert app["environment"]["FOO"] == "bar"
     assert app["labels"]["traefik.enable"] == "true"

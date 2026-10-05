@@ -18,8 +18,8 @@ def config_path() -> Path:
 
 @dataclass
 class Config:
-    host: str = ""  # ssh destination, e.g. user@fedora.local
-    domain: str = ""  # e.g. isalive.win
+    host: str = ""  # ssh destination, e.g. me@homeserver.local or an ~/.ssh/config alias
+    domain: str = ""  # e.g. example.com (a zone on your Cloudflare account)
     ssh_port: int | None = None
     ssh_key: str | None = None
     tunnel_name: str = "quick-deploy"
