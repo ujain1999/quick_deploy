@@ -46,7 +46,7 @@ You need:
 
 | Distro | Commands |
 |---|---|
-| Debian, Ubuntu, Raspberry Pi OS | `curl -fsSL https://get.docker.com \| sudo sh && sudo apt-get install -y rsync` |
+| Debian, Ubuntu, Raspberry Pi OS | `curl -fsSL https://get.docker.com \| sudo sh && sudo apt-get update && sudo apt-get install -y rsync` |
 | Fedora | `sudo dnf install -y moby-engine docker-compose rsync` |
 | RHEL, Rocky, Alma | `sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo && sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin rsync` (needs `dnf-plugins-core`) |
 | Arch | `sudo pacman -S --needed docker docker-compose rsync` |

@@ -12,8 +12,8 @@ from quick_deploy.server import _DETECT_SOCK, LIST_SCRIPT, STATUS_SCRIPT, SYSTEM
     "os_ids, expected",
     [
         ("fedora", "sudo dnf install -y rsync"),
-        ("ubuntu debian", "sudo apt-get install -y rsync"),
-        ("raspbian debian", "sudo apt-get install -y rsync"),
+        ("ubuntu debian", "sudo apt-get update && sudo apt-get install -y rsync"),
+        ("raspbian debian", "sudo apt-get update && sudo apt-get install -y rsync"),
         ("rocky rhel centos fedora", "sudo dnf install -y rsync"),
         ("manjaro arch", "sudo pacman -S --needed rsync"),
         ("opensuse-tumbleweed opensuse suse", "sudo zypper install -y rsync"),
@@ -31,6 +31,9 @@ def test_docker_hint():
     assert "linux/rhel/docker-ce.repo" in docker_hint("rocky rhel centos fedora")
     assert "linux/rhel/docker-ce.repo" in docker_hint("almalinux rhel centos fedora")
     assert "get.docker.com" in docker_hint("ubuntu debian")
+    # These list fedora/rhel in ID_LIKE, but neither moby-engine nor Docker's RHEL repo works on them.
+    assert "docs.docker.com" in docker_hint("ol fedora")
+    assert "docs.docker.com" in docker_hint("amzn centos rhel fedora")
     assert "addgroup" in docker_hint("alpine")
     assert "docs.docker.com" in docker_hint("") and "usermod" in docker_hint("")
 

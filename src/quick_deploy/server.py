@@ -78,10 +78,12 @@ def version_at_least(v: str, minimum: tuple[int, int]) -> bool:
 
 
 # Install hints, keyed by the IDs in /etc/os-release. The first of `$ID $ID_LIKE`
-# (e.g. "rocky rhel centos fedora") found in a table wins.
+# (e.g. "rocky rhel centos fedora") found in a table wins; a None entry means "no known command".
 _PKG = {
     "fedora": "sudo dnf install -y", "rhel": "sudo dnf install -y", "centos": "sudo dnf install -y",
-    "debian": "sudo apt-get install -y", "ubuntu": "sudo apt-get install -y",
+    # Fresh cloud images ship with empty package lists.
+    "debian": "sudo apt-get update && sudo apt-get install -y",
+    "ubuntu": "sudo apt-get update && sudo apt-get install -y",
     "arch": "sudo pacman -S --needed",
     "opensuse": "sudo zypper install -y", "suse": "sudo zypper install -y",
     "alpine": "sudo apk add",
@@ -94,7 +96,10 @@ _RHEL_DOCKER = (
     " && sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin"
     " && sudo systemctl enable --now docker"
 )
-_DOCKER = {
+_DOCKER: dict[str, str | None] = {
+    # Oracle Linux ("ol fedora") and Amazon Linux ("amzn centos rhel fedora") claim kinship with
+    # distros whose commands fail on them; send them to Docker's docs instead.
+    "ol": None, "amzn": None,
     "fedora": "sudo dnf install -y moby-engine docker-compose && sudo systemctl enable --now docker",
     "rhel": _RHEL_DOCKER, "centos": _RHEL_DOCKER, "debian": _GET_DOCKER, "ubuntu": _GET_DOCKER,
     "arch": "sudo pacman -S --needed docker docker-compose && sudo systemctl enable --now docker",
@@ -104,7 +109,7 @@ _DOCKER = {
 }  # fmt: skip
 
 
-def _lookup(table: dict[str, str], os_ids: str) -> str | None:
+def _lookup(table: dict[str, str | None], os_ids: str) -> str | None:
     return next((table[w] for w in os_ids.split() if w in table), None)
 
 
