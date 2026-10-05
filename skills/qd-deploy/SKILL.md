@@ -49,9 +49,16 @@ below). It removes host `ports:` mappings and adds `restart: unless-stopped`; yo
 compose file for that.
 
 Before deploying, check what will be uploaded: the whole directory is rsynced except `.git`,
-`node_modules`, `.venv`, `__pycache__`, `.DS_Store` and patterns in `.qdignore`. **`.env` is uploaded** and
-passed to the container. If the project has large build outputs, datasets or secrets that shouldn't go to the
-server, add them to a `.qdignore` (rsync exclude patterns, one per line).
+`node_modules`, `.venv`, `__pycache__`, `.DS_Store` and patterns in `.qdignore`. **`.env` is uploaded.**
+If the project has large build outputs, datasets or secrets that shouldn't go to the server, add them to a
+`.qdignore` (rsync exclude patterns, one per line).
+
+How `.env` reaches the app depends on the project:
+
+- **Dockerfile only:** qd passes `.env` to the container as environment variables.
+- **Compose:** qd does not. Compose only uses `.env` to substitute `${VAR}` in the compose file. If the app
+  needs those variables at runtime, the service must list them under `environment:` or have
+  `env_file: .env`; add that if it's missing.
 
 ## 3. Deploy
 
