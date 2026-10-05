@@ -1,0 +1,20 @@
+[project]
+name = "quick-deploy"
+version = "0.1.0"
+description = "Deploy dockerised projects to a home server at https://<name>.<your-domain> via a Cloudflare tunnel"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+qd = "quick_deploy.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quick_deploy"]
