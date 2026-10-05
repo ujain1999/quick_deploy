@@ -35,7 +35,9 @@ from quick_deploy.server import (
     MIN_COMPOSE,
     TRAEFIK_404,
     bootstrap,
+    docker_hint,
     list_apps,
+    pkg_hint,
     probe,
     server_status,
     version_at_least,
@@ -47,9 +49,9 @@ exit codes:
   0 ok, 1 error, 2 bad usage, 3 deployed but URL not reachable yet, 4 deployment not found
 
 typical flow:
-  qd setup --host me@fedora.local --domain isalive.win   # once (needs CLOUDFLARE_API_TOKEN)
-  qd deploy                                            # deploy ./ at a random name, prints URL
-  qd deploy ~/code/blog --name blog                    # https://blog.isalive.win
+  qd setup --host me@homeserver.local --domain example.com   # once (needs CLOUDFLARE_API_TOKEN)
+  qd deploy                                                # deploy ./ at a random name, prints URL
+  qd deploy ~/code/blog --name blog                        # https://blog.example.com
   qd ls --json
 """
 
@@ -81,16 +83,13 @@ def cmd_setup(a: argparse.Namespace) -> int:
 
     log(f"checking {cfg.host} ...")
     st = server_status(r)
+    os_ids = st.get("os", "")
     if not st.get("docker"):
-        raise QDError(
-            "docker is not usable by this user on the server. On Fedora:\n"
-            "  sudo dnf install -y moby-engine docker-compose rsync\n"
-            "  sudo systemctl enable --now docker && sudo usermod -aG docker $USER   # then log out/in"
-        )
+        raise QDError(f"docker is not usable by this user on the server. Try:\n  {docker_hint(os_ids)}")
     if not version_at_least(st.get("compose", ""), MIN_COMPOSE):
         raise QDError(f"docker compose >= {'.'.join(map(str, MIN_COMPOSE))} required on the server (found {st.get('compose') or 'none'})")
     if not st.get("rsync"):
-        raise QDError("rsync is missing on the server: sudo dnf install -y rsync")
+        raise QDError(f"rsync is missing on the server: {pkg_hint(os_ids, 'rsync')}")
 
     token = a.tunnel_token
     if token:
@@ -306,19 +305,20 @@ def cmd_doctor(a: argparse.Namespace) -> int:
 
     try:
         st = server_status(Remote(cfg))
-        check("ssh", True, cfg.host)
+        check("ssh", True, f"{cfg.host} ({st.get('os') or 'unknown os'})")
     except QDError as e:
         st = None
         check("ssh", False, str(e), f"make `ssh {cfg.host}` work with a key (ssh-copy-id {cfg.host})")
     if st is not None:
-        check("docker", bool(st.get("docker")), st.get("docker", ""), "install docker and add the user to the docker group")
+        os_ids = st.get("os", "")
+        check("docker", bool(st.get("docker")), st.get("docker", ""), docker_hint(os_ids))
         check(
             "compose",
             version_at_least(st.get("compose", ""), MIN_COMPOSE),
             st.get("compose", ""),
-            f"need docker compose >= {'.'.join(map(str, MIN_COMPOSE))}",
+            f"need docker compose >= {'.'.join(map(str, MIN_COMPOSE))}; update Docker and its compose plugin",
         )
-        check("rsync", bool(st.get("rsync")), st.get("rsync", ""), "sudo dnf install -y rsync")
+        check("rsync", bool(st.get("rsync")), st.get("rsync", ""), pkg_hint(os_ids, "rsync"))
         check("network", st.get("network") == "ok", "qd", "run qd setup")
         check("traefik", st.get("traefik") == "running", st.get("traefik") or "absent", "run qd setup")
         check("cloudflared", st.get("cloudflared") == "running", st.get("cloudflared") or "absent", "run qd setup")
@@ -374,8 +374,8 @@ def build_parser() -> Parser:
     sub = p.add_subparsers(dest="command", metavar="COMMAND", parser_class=Parser)
 
     s = sub.add_parser("setup", help="one-time: prepare the server and the Cloudflare tunnel (idempotent)")
-    s.add_argument("--host", help="ssh destination of the server, e.g. me@fedora.local")
-    s.add_argument("--domain", help="Cloudflare domain, e.g. isalive.win")
+    s.add_argument("--host", help="ssh destination of the server, e.g. me@homeserver.local or an ~/.ssh/config alias")
+    s.add_argument("--domain", help="domain on your Cloudflare account, e.g. example.com")
     s.add_argument("--ssh-port", type=int)
     s.add_argument("--ssh-key", help="ssh identity file")
     s.add_argument("--tunnel-name", help="Cloudflare tunnel name (default quick-deploy)")

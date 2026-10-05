@@ -33,9 +33,10 @@ services:
       - --entrypoints.web.forwardedheaders.insecure=true
       - --log.level=WARN
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # DOCKER_SOCK is detected by bootstrap (differs for rootless docker).
+      - ${{DOCKER_SOCK:-/var/run/docker.sock}}:/var/run/docker.sock:ro
     security_opt:
-      - label=disable  # SELinux (Fedora) blocks the docker socket otherwise
+      - label=disable  # SELinux (Fedora, RHEL) blocks the docker socket otherwise; a no-op elsewhere
     networks: [{NETWORK}]
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -55,6 +56,7 @@ networks:
 # Prints key=value lines describing the server's state; never fails.
 STATUS_SCRIPT = r"""
 v() { "$@" 2>/dev/null || true; }
+echo "os=$(. /etc/os-release 2>/dev/null; echo $ID $ID_LIKE)"
 echo "docker=$(v docker version --format '{{.Server.Version}}')"
 echo "compose=$(v docker compose version --short)"
 echo "rsync=$(command -v rsync || true)"
@@ -75,6 +77,62 @@ def version_at_least(v: str, minimum: tuple[int, int]) -> bool:
     return bool(m) and (int(m[1]), int(m[2])) >= minimum
 
 
+# Install hints, keyed by the IDs in /etc/os-release. The first of `$ID $ID_LIKE`
+# (e.g. "rocky rhel centos fedora") found in a table wins; a None entry means "no known command".
+_PKG = {
+    "fedora": "sudo dnf install -y", "rhel": "sudo dnf install -y", "centos": "sudo dnf install -y",
+    # Fresh cloud images ship with empty package lists.
+    "debian": "sudo apt-get update && sudo apt-get install -y",
+    "ubuntu": "sudo apt-get update && sudo apt-get install -y",
+    "arch": "sudo pacman -S --needed",
+    "opensuse": "sudo zypper install -y", "suse": "sudo zypper install -y",
+    "alpine": "sudo apk add",
+}  # fmt: skip
+_GET_DOCKER = "curl -fsSL https://get.docker.com | sudo sh && sudo systemctl enable --now docker"
+# get.docker.com rejects RHEL clones (Rocky, Alma); Docker's RHEL repo works for all of them.
+_RHEL_DOCKER = (
+    "sudo dnf install -y dnf-plugins-core"
+    " && sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo"
+    " && sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin"
+    " && sudo systemctl enable --now docker"
+)
+_DOCKER: dict[str, str | None] = {
+    # Oracle Linux ("ol fedora") and Amazon Linux ("amzn centos rhel fedora") claim kinship with
+    # distros whose commands fail on them; send them to Docker's docs instead.
+    "ol": None, "amzn": None,
+    "fedora": "sudo dnf install -y moby-engine docker-compose && sudo systemctl enable --now docker",
+    "rhel": _RHEL_DOCKER, "centos": _RHEL_DOCKER, "debian": _GET_DOCKER, "ubuntu": _GET_DOCKER,
+    "arch": "sudo pacman -S --needed docker docker-compose && sudo systemctl enable --now docker",
+    "opensuse": "sudo zypper install -y docker docker-compose && sudo systemctl enable --now docker",
+    "suse": "sudo zypper install -y docker docker-compose && sudo systemctl enable --now docker",
+    "alpine": "sudo apk add docker docker-cli-compose && sudo rc-update add docker && sudo service docker start",
+}  # fmt: skip
+
+
+def _lookup(table: dict[str, str | None], os_ids: str) -> str | None:
+    return next((table[w] for w in os_ids.split() if w in table), None)
+
+
+def pkg_hint(os_ids: str, *pkgs: str) -> str:
+    """Command installing pkgs on the server's distro."""
+    cmd = _lookup(_PKG, os_ids)
+    return f"{cmd} {' '.join(pkgs)}" if cmd else f"install {' '.join(pkgs)} with the server's package manager"
+
+
+def docker_hint(os_ids: str) -> str:
+    """Commands making docker usable by the ssh user on the server's distro."""
+    install = _lookup(_DOCKER, os_ids) or "install Docker Engine + compose plugin: https://docs.docker.com/engine/install/"
+    group = "sudo addgroup $USER docker" if "alpine" in os_ids.split() else "sudo usermod -aG docker $USER"
+    return f"{install}\n  {group}   # then log out and back in (or use rootless docker)"
+
+
+# Where the docker CLI talks to: honours rootless docker's context, else the default socket.
+_DETECT_SOCK = """\
+sock=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)
+case "$sock" in unix://*) sock=${sock#unix://} ;; *) sock=/var/run/docker.sock ;; esac
+"""
+
+
 def bootstrap(r: Remote, tunnel_token: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9+/=_-]+", tunnel_token):
         raise QDError("tunnel token has unexpected characters")
@@ -84,6 +142,8 @@ def bootstrap(r: Remote, tunnel_token: str) -> None:
         'cd "$QD/system"\n'
         "umask 077\n"
         + heredoc(".env", f"TUNNEL_TOKEN={tunnel_token}")
+        + _DETECT_SOCK
+        + 'echo "DOCKER_SOCK=$sock" >> .env\n'
         + heredoc("compose.yml", SYSTEM_COMPOSE)
         + "docker compose -p qd-system up -d --pull always --remove-orphans\n"
     )

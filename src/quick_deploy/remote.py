@@ -15,8 +15,9 @@ from pathlib import Path
 from quick_deploy.config import Config
 from quick_deploy.errors import NOT_FOUND, QDError
 
-# Prepended to every remote script.
-PRELUDE = 'set -eo pipefail\nQD="$HOME/.qd"\n'
+# Prepended to every remote script. Scripts are POSIX sh (no bash needed on the server);
+# pipefail is used where the shell supports it.
+PRELUDE = 'set -e\n(set -o pipefail) 2>/dev/null && set -o pipefail\nQD="$HOME/.qd"\n'
 
 DEFAULT_EXCLUDES = [
     ".git",
@@ -61,7 +62,7 @@ class Remote:
     def _ssh(self, script: str, stdout, stderr) -> subprocess.CompletedProcess:
         sys.stderr.flush()
         return subprocess.run(
-            ["ssh", *self.ssh_opts(), self.cfg.host, "bash -s"],
+            ["ssh", *self.ssh_opts(), self.cfg.host, "sh -s"],
             input=(PRELUDE + script).encode(),
             stdout=stdout,
             stderr=stderr,
@@ -81,12 +82,12 @@ class Remote:
         raise QDError(err or f"remote command failed (exit {rc})")
 
     def run(self, script: str, stdout=None) -> None:
-        """Run a bash script on the server, streaming output (to stderr by default)."""
+        """Run a shell script on the server, streaming output (to stderr by default)."""
         p = self._ssh(script, stdout=stdout or sys.stderr, stderr=sys.stderr)
         self._check(p.returncode, "")
 
     def output(self, script: str) -> str:
-        """Run a bash script on the server and return its stdout."""
+        """Run a shell script on the server and return its stdout."""
         p = self._ssh(script, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self._check(p.returncode, p.stderr.decode(errors="replace"))
         return p.stdout.decode(errors="replace")
