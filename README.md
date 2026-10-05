@@ -126,6 +126,14 @@ patterns listed in a `.qdignore` file. `.env` **is** synced.
 - Exit codes: `0` ok · `1` error · `2` bad usage/config · `3` deployed but URL not answering within `--wait` · `4` no such deployment.
 - Errors: `{"ok": false, "error": "...", "exit_code": N}`.
 
+An agent skill in [`skills/qd-deploy`](skills/qd-deploy/SKILL.md) teaches coding agents to deploy with qd:
+preflight, making a project deployable, flags, and recovering from each exit code. For Claude Code, link it
+into your user skills so it works in any project:
+
+```sh
+ln -s "$PWD/skills/qd-deploy" ~/.claude/skills/qd-deploy
+```
+
 ```console
 $ qd deploy ./site --json
 {
