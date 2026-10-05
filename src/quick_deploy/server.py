@@ -87,9 +87,16 @@ _PKG = {
     "alpine": "sudo apk add",
 }  # fmt: skip
 _GET_DOCKER = "curl -fsSL https://get.docker.com | sudo sh && sudo systemctl enable --now docker"
+# get.docker.com rejects RHEL clones (Rocky, Alma); Docker's RHEL repo works for all of them.
+_RHEL_DOCKER = (
+    "sudo dnf install -y dnf-plugins-core"
+    " && sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo"
+    " && sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin"
+    " && sudo systemctl enable --now docker"
+)
 _DOCKER = {
     "fedora": "sudo dnf install -y moby-engine docker-compose && sudo systemctl enable --now docker",
-    "rhel": _GET_DOCKER, "centos": _GET_DOCKER, "debian": _GET_DOCKER, "ubuntu": _GET_DOCKER,
+    "rhel": _RHEL_DOCKER, "centos": _RHEL_DOCKER, "debian": _GET_DOCKER, "ubuntu": _GET_DOCKER,
     "arch": "sudo pacman -S --needed docker docker-compose && sudo systemctl enable --now docker",
     "opensuse": "sudo zypper install -y docker docker-compose && sudo systemctl enable --now docker",
     "suse": "sudo zypper install -y docker docker-compose && sudo systemctl enable --now docker",

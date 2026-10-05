@@ -28,7 +28,9 @@ def test_pkg_hint(os_ids, expected):
 def test_docker_hint():
     assert "moby-engine" in docker_hint("fedora")
     # RHEL clones list fedora in ID_LIKE but have no moby-engine package.
-    assert "get.docker.com" in docker_hint("rocky rhel centos fedora")
+    assert "linux/rhel/docker-ce.repo" in docker_hint("rocky rhel centos fedora")
+    assert "linux/rhel/docker-ce.repo" in docker_hint("almalinux rhel centos fedora")
+    assert "get.docker.com" in docker_hint("ubuntu debian")
     assert "addgroup" in docker_hint("alpine")
     assert "docs.docker.com" in docker_hint("") and "usermod" in docker_hint("")
 
