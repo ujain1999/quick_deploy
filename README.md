@@ -117,7 +117,8 @@ in `~/.qd/system/.env` (mode 600). If you'd rather create the tunnel in the dash
 directory fails unless you pass `--force`.
 
 **Excluded from sync:** `.git`, `node_modules`, `.venv`, `__pycache__`, `.DS_Store`, plus any rsync
-patterns listed in a `.qdignore` file. `.env` **is** synced.
+patterns listed in a `.qdignore` file. Excluded files already on the server are left alone, except
+a top-level `.env`, which is removed so it stops reaching the container. `.env` **is** synced unless you exclude it.
 
 ## For agents
 
@@ -142,6 +143,14 @@ $ qd deploy ./site --json
   "reachable": true,
   "http_status": 200
 }
+```
+
+An agent skill in [`skills/qd-deploy`](skills/qd-deploy/SKILL.md) teaches coding agents to deploy with qd:
+preflight, making a project deployable, flags, and recovering from each exit code. For Claude Code, link it
+into your user skills so it works in any project. Run this from the root of this repo:
+
+```sh
+mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/qd-deploy" ~/.claude/skills/qd-deploy
 ```
 
 ## Caveats

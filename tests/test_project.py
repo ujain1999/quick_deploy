@@ -212,11 +212,21 @@ def test_dockerfile_compose_is_valid(tmp_path: Path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "Dockerfile").write_text("FROM nginx\n")
     (tmp_path / "src" / ".env").write_text("FOO=bar\n")
-    (tmp_path / "qd.compose.yml").write_text(dockerfile_compose("blog", "example.com", "Dockerfile", 80, True))
+    (tmp_path / "qd.compose.yml").write_text(dockerfile_compose("blog", "example.com", "Dockerfile", 80))
     app = compose_config(tmp_path, "qd.compose.yml")["services"]["app"]
     assert app["environment"]["FOO"] == "bar"
     assert app["labels"]["traefik.enable"] == "true"
     assert list(app["networks"]) == ["qd"]
+
+
+@needs_compose
+def test_dockerfile_compose_without_env(tmp_path: Path):
+    """.env missing on the server (absent locally, or excluded by .qdignore) must not break the deploy."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Dockerfile").write_text("FROM nginx\n")
+    (tmp_path / "qd.compose.yml").write_text(dockerfile_compose("blog", "example.com", "Dockerfile", 80))
+    app = compose_config(tmp_path, "qd.compose.yml")["services"]["app"]
+    assert not app.get("environment")
 
 
 @needs_compose
