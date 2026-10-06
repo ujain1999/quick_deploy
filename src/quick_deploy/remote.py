@@ -32,6 +32,21 @@ DEFAULT_EXCLUDES = [
 shq = shlex.quote
 
 
+def sync_filters(local_dir: Path) -> list[str]:
+    """rsync options that mirror local_dir, minus DEFAULT_EXCLUDES and .qdignore patterns.
+
+    Excluded files are kept on the server (so .qdignore can protect server-side data), except
+    a top-level .env: once it's excluded or deleted locally it must stop reaching the container.
+    """
+    args = ["--delete", "--filter", "R /.env"]
+    for ex in DEFAULT_EXCLUDES:
+        args += ["--exclude", ex]
+    ignore = local_dir / ".qdignore"
+    if ignore.is_file():
+        args += ["--exclude-from", str(ignore)]
+    return args
+
+
 def heredoc(path: str, content: str) -> str:
     """Shell snippet that writes content to path on the server."""
     if "\nQD_EOF\n" in f"\n{content}\n":
@@ -94,13 +109,8 @@ class Remote:
 
     def sync(self, local_dir: Path, remote_dir: str) -> None:
         """Mirror local_dir into remote_dir (relative to the server user's home)."""
-        args = ["rsync", "-az", "--delete", "-e", "ssh " + " ".join(map(shq, self.ssh_opts()))]
-        for ex in DEFAULT_EXCLUDES:
-            args += ["--exclude", ex]
-        ignore = local_dir / ".qdignore"
-        if ignore.is_file():
-            args += ["--exclude-from", str(ignore)]
-        args += [f"{local_dir}/", f"{self.cfg.host}:{remote_dir}/"]
+        args = ["rsync", "-az", "-e", "ssh " + " ".join(map(shq, self.ssh_opts()))]
+        args += sync_filters(local_dir) + [f"{local_dir}/", f"{self.cfg.host}:{remote_dir}/"]
         sys.stderr.flush()
         p = subprocess.run(args, stdout=sys.stderr, stderr=sys.stderr)
         if p.returncode != 0:

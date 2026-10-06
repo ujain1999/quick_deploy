@@ -117,7 +117,8 @@ in `~/.qd/system/.env` (mode 600). If you'd rather create the tunnel in the dash
 directory fails unless you pass `--force`.
 
 **Excluded from sync:** `.git`, `node_modules`, `.venv`, `__pycache__`, `.DS_Store`, plus any rsync
-patterns listed in a `.qdignore` file. `.env` **is** synced.
+patterns listed in a `.qdignore` file. Excluded files already on the server are left alone, except
+a top-level `.env`, which is removed so it stops reaching the container. `.env` **is** synced unless you exclude it.
 
 ## For agents
 
