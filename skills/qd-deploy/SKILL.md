@@ -55,7 +55,7 @@ If the project has large build outputs, datasets or secrets that shouldn't go to
 
 How `.env` reaches the app depends on the project:
 
-- **Dockerfile only:** qd passes `.env` to the container as environment variables.
+- **Dockerfile only:** qd passes `.env` to the container as environment variables, if it was uploaded.
 - **Compose:** qd does not. Compose only uses `.env` to substitute `${VAR}` in the compose file. If the app
   needs those variables at runtime, the service must list them under `environment:` or have
   `env_file: .env`; add that if it's missing.

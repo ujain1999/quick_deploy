@@ -149,7 +149,7 @@ preflight, making a project deployable, flags, and recovering from each exit cod
 into your user skills so it works in any project. Run this from the root of this repo:
 
 ```sh
-mkdir -p ~/.claude/skills && ln -s "$PWD/skills/qd-deploy" ~/.claude/skills/qd-deploy
+mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/qd-deploy" ~/.claude/skills/qd-deploy
 ```
 
 ## Caveats

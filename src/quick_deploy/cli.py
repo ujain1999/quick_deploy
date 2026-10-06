@@ -200,7 +200,7 @@ def cmd_deploy(a: argparse.Namespace) -> int:
         if not port:
             raise QDError(f"no EXPOSE in {proj.file}; pass --port", USAGE)
         service, generated = "app", "qd.compose.yml"
-        content = dockerfile_compose(name, cfg.domain, proj.file, port, proj.has_env)
+        content = dockerfile_compose(name, cfg.domain, proj.file, port)
         files = [generated]
 
     meta = {
