@@ -129,6 +129,15 @@ def test_pick_service_single_non_datastore():
     assert pick_service(services, None, None) == ("blog", 2368)
 
 
+def test_app_is_up_basic_auth():
+    challenge = 'Basic realm="blog.example.com"'
+    # Traefik's challenge for this site: the route still has other credentials (just changed or removed).
+    assert not app_is_up(401, "401 Unauthorized", challenge, "blog.example.com")
+    # The app's own auth.
+    assert app_is_up(401, "login required", 'Basic realm="admin"', "blog.example.com")
+    assert app_is_up(401, "", "", "blog.example.com")
+
+
 def test_app_is_up():
     assert app_is_up(200, "hi")
     assert app_is_up(404, "custom not found")
@@ -247,3 +256,32 @@ def test_compose_build_port_from_dockerfile(tmp_path: Path):
     to_local = lambda p: remote_to_local(p, "/.qd/apps/demo/src", local_src)  # noqa: E731
     assert pick_service(services, None, None, lambda spec: build_expose(spec, to_local)) == ("app", 8000)
     assert tunnel_services(services) == ["cloudflared"]
+
+
+@needs_compose
+def test_basic_auth_labels_survive_interpolation(tmp_path: Path):
+    """Compose would expand "$apr1$..." as variables; the hash must reach the labels intact."""
+    htpasswd = "alice:$apr1$saltsalt$yAAkm4libquA.ZWLHbSBq/"
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Dockerfile").write_text("FROM nginx\n")
+    (tmp_path / "src" / "compose.yml").write_text("services:\n  web:\n    image: nginx\n")
+    services = compose_config(tmp_path / "src", "compose.yml")["services"]
+    (tmp_path / "qd.override.yml").write_text(compose_override(services, "web", 80, "blog", "d.com", htpasswd=htpasswd))
+    (tmp_path / "qd.compose.yml").write_text(dockerfile_compose("blog", "d.com", "Dockerfile", 80, htpasswd))
+    for labels in (
+        compose_config(tmp_path, "src/compose.yml", "qd.override.yml")["services"]["web"]["labels"],
+        compose_config(tmp_path, "qd.compose.yml")["services"]["app"]["labels"],
+    ):
+        # `config` re-escapes "$" in its output; unescaped, the hash would have come out as "alice:".
+        assert labels["traefik.http.middlewares.qd-blog-auth.basicauth.users"].replace("$$", "$") == htpasswd
+        assert labels["traefik.http.middlewares.qd-blog-auth.basicauth.removeheader"] == "true"
+        assert labels["traefik.http.routers.qd-blog.middlewares"] == "qd-blog-auth@docker"
+
+
+@needs_compose
+def test_no_auth_labels_by_default(tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Dockerfile").write_text("FROM nginx\n")
+    (tmp_path / "qd.compose.yml").write_text(dockerfile_compose("blog", "d.com", "Dockerfile", 80))
+    labels = compose_config(tmp_path, "qd.compose.yml")["services"]["app"]["labels"]
+    assert not any("middlewares" in k for k in labels)

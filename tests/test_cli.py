@@ -26,3 +26,8 @@ def test_not_configured_is_usage_error(capsys, tmp_path, monkeypatch):
 def test_bad_flag_reports_json(capsys):
     code, out, _ = run(capsys, "deploy", "--bogus", "--json")
     assert code == 2 and "unrecognized" in json.loads(out)["error"]
+
+
+def test_auth_and_public_are_exclusive(capsys):
+    code, out, _ = run(capsys, "deploy", "--auth", "alice", "--public", "--json")
+    assert code == 2 and "not allowed with" in json.loads(out)["error"]

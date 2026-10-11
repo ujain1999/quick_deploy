@@ -96,7 +96,7 @@ in `~/.qd/system/.env` (mode 600). If you'd rather create the tunnel in the dash
 
 | Command | |
 |---|---|
-| `qd deploy [DIR] [-n NAME] [-p PORT] [-s SERVICE] [-f FILE]` | Deploy DIR (default `.`). Prints the URL on stdout. |
+| `qd deploy [DIR] [-n NAME] [-p PORT] [-s SERVICE] [-f FILE] [--auth USER[:PASS] \| --public]` | Deploy DIR (default `.`). Prints the URL on stdout. |
 | `qd ls` | List deployments and container status. |
 | `qd logs NAME [-f] [--tail N] [-s SERVICE]` | Container logs. |
 | `qd rm NAME [--volumes]` | Stop and delete a deployment (and its built images). |
@@ -115,6 +115,23 @@ in `~/.qd/system/.env` (mode 600). If you'd rather create the tunnel in the dash
 **Names:** without `--name`, redeploying the same directory reuses its URL. A new directory gets a random
 `adjective-adjective-noun` name (`--new` forces a fresh one). Deploying to a name owned by another
 directory fails unless you pass `--force`.
+
+**Password protection:** sites are public by default. `--auth USER[:PASSWORD]` puts HTTP basic auth in
+front of one (enforced by Traefik, so the app needs no changes and never sees the credentials):
+
+```console
+$ qd deploy --auth alice                         # password generated and printed (stderr)
+$ QD_AUTH_PASSWORD=... qd deploy --auth alice    # keeps it out of shell history and `ps`
+$ qd deploy --auth alice:s3cret
+$ qd deploy --public                             # remove it again
+```
+
+Redeploys keep the credential until you pass `--auth` again (to change it) or `--public`, so a site never
+becomes public by accident. Taking over a protected name from another directory with `--force` also needs
+`--auth` or `--public`. Only a salted APR1-MD5 hash is stored, on the server, in `~/.qd/apps/<name>/htpasswd`.
+`qd ls` shows each site's access in the `ACCESS` column. qd doesn't keep the password, so a redeploy that keeps
+the credential can't check whether the site answers unless `QD_AUTH_PASSWORD` holds it. With `--keep-ports`,
+the published host ports bypass basic auth.
 
 **Excluded from sync:** `.git`, `node_modules`, `.venv`, `__pycache__`, `.DS_Store`, plus any rsync
 patterns listed in a `.qdignore` file. Excluded files already on the server are left alone, except
@@ -138,6 +155,7 @@ $ qd deploy ./site --json
   "service": "web",
   "port": 3000,
   "deployed_at": "2026-10-05T07:30:00+00:00",
+  "auth": null,
   "ok": true,
   "redeploy": false,
   "reachable": true,
@@ -157,5 +175,6 @@ mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/qd-deploy" ~/.claude/skills/qd
 
 - Only one subdomain level (`x.example.com`, not `a.b.example.com`), because Cloudflare's free certificate covers only `*.example.com`.
 - A specific DNS record (e.g. `www`) takes precedence over the wildcard.
-- Sites are public. Put Cloudflare Access in front of the hostnames you want to keep private.
+- Sites are public unless deployed with `--auth`. Basic auth is a single shared password with no rate limiting;
+  for per-person logins or SSO, put Cloudflare Access in front of the hostname.
 - On SELinux distros (Fedora, RHEL), bind mounts in your compose file may need `:z` labels.

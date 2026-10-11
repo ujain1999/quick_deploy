@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
@@ -160,6 +162,7 @@ class App:
     port: int
     deployed_at: str
     status: str = "unknown"  # running | degraded | stopped | missing
+    auth: str | None = None  # basic auth user, None when public
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -206,32 +209,46 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def probe(url: str, timeout: float = 10) -> tuple[int | None, str]:
-    """GET url without following redirects; return (status, start of body)."""
+def probe(url: str, timeout: float = 10, auth: tuple[str, str] | None = None) -> tuple[int | None, str, str]:
+    """GET url without following redirects, with optional basic auth.
+
+    Returns (status, start of body, WWW-Authenticate header).
+    """
     opener = urllib.request.build_opener(_NoRedirect)
-    req = urllib.request.Request(url, headers={"User-Agent": f"quick-deploy/{__version__}"})
+    headers = {"User-Agent": f"quick-deploy/{__version__}"}
+    if auth:
+        headers["Authorization"] = "Basic " + base64.b64encode(":".join(auth).encode()).decode()
+    req = urllib.request.Request(url, headers=headers)
     try:
         with opener.open(req, timeout=timeout) as resp:
-            return resp.status, resp.read(64).decode(errors="replace")
+            return resp.status, resp.read(64).decode(errors="replace"), ""
     except urllib.error.HTTPError as e:
-        return e.code, e.read(64).decode(errors="replace")
+        return e.code, e.read(64).decode(errors="replace"), e.headers.get("WWW-Authenticate", "")
     except (urllib.error.URLError, OSError):
-        return None, ""
+        return None, "", ""
 
 
-def app_is_up(status: int | None, body: str) -> bool:
-    """True once the app itself answers (not a tunnel/proxy error or Traefik's no-route 404)."""
+def app_is_up(status: int | None, body: str, challenge: str = "", host: str = "") -> bool:
+    """True once the app itself answers (not a tunnel/proxy error or Traefik's no-route 404).
+
+    Traefik's own basic auth challenge for host (realm = host, see traefik_labels) doesn't count either:
+    it means the route still has credentials other than the ones probed with, e.g. right after
+    a deploy changed or removed them. A 401 from the app itself does count.
+    """
     if status is None or status in (502, 503, 504) or 520 <= status <= 530:
+        return False
+    if status == 401 and host and f'realm="{host}"' in challenge:
         return False
     return not (status == 404 and body.strip() == TRAEFIK_404)
 
 
-def wait_until_up(url: str, timeout: float) -> tuple[bool, int | None]:
+def wait_until_up(url: str, timeout: float, auth: tuple[str, str] | None = None) -> tuple[bool, int | None]:
     deadline = time.monotonic() + timeout
+    host = urllib.parse.urlsplit(url).hostname or ""
     status = None
     while True:
-        status, body = probe(url)
-        if app_is_up(status, body):
+        status, body, challenge = probe(url, auth=auth)
+        if app_is_up(status, body, challenge, host):
             return True, status
         if time.monotonic() >= deadline:
             return False, status

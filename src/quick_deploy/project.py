@@ -174,9 +174,10 @@ def pick_service(
     return svc, port
 
 
-def traefik_labels(name: str, domain: str, port: int) -> dict[str, str]:
+def traefik_labels(name: str, domain: str, port: int, htpasswd: str | None = None) -> dict[str, str]:
+    """Route <name>.<domain> to port; with htpasswd ("user:hash"), behind HTTP basic auth."""
     router = f"qd-{name}"
-    return {
+    labels = {
         "traefik.enable": "true",
         "traefik.docker.network": NETWORK,
         f"traefik.http.routers.{router}.rule": f"Host(`{name}.{domain}`)",
@@ -184,6 +185,16 @@ def traefik_labels(name: str, domain: str, port: int) -> dict[str, str]:
         f"traefik.http.services.{router}.loadbalancer.server.port": str(port),
         "dev.qd.app": name,
     }
+    if htpasswd:
+        mw = f"{router}-auth"
+        labels |= {
+            f"traefik.http.middlewares.{mw}.basicauth.users": htpasswd,
+            f"traefik.http.middlewares.{mw}.basicauth.realm": f"{name}.{domain}",
+            # The app never sees qd's credentials, so it can't confuse them with its own auth.
+            f"traefik.http.middlewares.{mw}.basicauth.removeheader": "true",
+            f"traefik.http.routers.{router}.middlewares": f"{mw}@docker",
+        }
+    return labels
 
 
 def _q(s: str) -> str:
@@ -192,14 +203,21 @@ def _q(s: str) -> str:
 
 
 def _labels_yaml(labels: dict[str, str], indent: str) -> list[str]:
-    return [f"{indent}labels:"] + [f"{indent}  {_q(k)}: {_q(v)}" for k, v in labels.items()]
+    # Compose interpolates "$" in values (password hashes have several); "$$" is a literal "$".
+    return [f"{indent}labels:"] + [f"{indent}  {_q(k)}: {_q(v.replace('$', '$$'))}" for k, v in labels.items()]
 
 
 _NETWORKS_FOOTER = f"networks:\n  {NETWORK}:\n    name: {NETWORK}\n    external: true\n"
 
 
 def compose_override(
-    services: dict, svc: str, port: int, name: str, domain: str, keep_ports: bool = False
+    services: dict,
+    svc: str,
+    port: int,
+    name: str,
+    domain: str,
+    keep_ports: bool = False,
+    htpasswd: str | None = None,
 ) -> str:
     """Override file layered on the user's compose file with `-f`.
 
@@ -212,7 +230,7 @@ def compose_override(
         spec = services[s]
         lines: list[str] = []
         if s == svc:
-            lines += _labels_yaml(traefik_labels(name, domain, port), "    ")
+            lines += _labels_yaml(traefik_labels(name, domain, port, htpasswd), "    ")
             # Networks merge by key, so restating the service's own networks keeps them.
             nets = [n for n in (spec.get("networks") or {}) if n != NETWORK] or ["default"]
             lines.append("    networks:")
@@ -227,7 +245,7 @@ def compose_override(
     return "\n".join(out) + "\n" + _NETWORKS_FOOTER
 
 
-def dockerfile_compose(name: str, domain: str, dockerfile: str, port: int) -> str:
+def dockerfile_compose(name: str, domain: str, dockerfile: str, port: int, htpasswd: str | None = None) -> str:
     """Complete compose file for a project that only has a Dockerfile (lives next to src/).
 
     `.env` is optional because it may be absent or excluded from the sync by `.qdignore`.
@@ -244,6 +262,6 @@ def dockerfile_compose(name: str, domain: str, dockerfile: str, port: int) -> st
         "      - path: ./src/.env",
         "        required: false",
     ]
-    out += _labels_yaml(traefik_labels(name, domain, port), "    ")
+    out += _labels_yaml(traefik_labels(name, domain, port, htpasswd), "    ")
     out += ["    networks:", f"      - {NETWORK}"]
     return "\n".join(out) + "\n" + _NETWORKS_FOOTER
