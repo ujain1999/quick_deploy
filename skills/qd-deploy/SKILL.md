@@ -77,6 +77,8 @@ Options:
 | `-f, --file FILE` | Compose file or Dockerfile to use, relative to DIR. |
 | `--wait SECONDS` | How long to wait for the URL to answer (default 90). Raise it for slow-starting apps. |
 | `--new` | Use a fresh random name instead of reusing this directory's URL. |
+| `--auth USER[:PASS]` | Put HTTP basic auth in front of the site. See "Password protection" below. |
+| `--public` | Remove basic auth set by an earlier deploy. **Ask the user first**: it makes a private site public. |
 | `--keep-ports` | Keep host port mappings from the compose file. Rarely wanted. |
 | `--force` | Take over a name owned by another directory. **Ask the user first**: it replaces someone else's site. |
 
@@ -92,6 +94,7 @@ Successful output:
   "mode": "compose",
   "service": "web",
   "port": 3000,
+  "auth": null,
   "ok": true,
   "redeploy": false,
   "reachable": true,
@@ -117,6 +120,29 @@ Errors look like `{"ok": false, "error": "...", "exit_code": N}`.
 
 Redeploying after a fix is just running the same `qd deploy <DIR> --json` again: same directory, same URL.
 
+## Password protection
+
+Sites are public by default. Use `--auth` when the user asks for a private or password-protected site,
+or agrees to one after you point out that the app exposes something sensitive.
+
+```sh
+qd deploy <DIR> --auth alice --json      # qd generates a password: it's in "auth_password"
+QD_AUTH_PASSWORD='...' qd deploy <DIR> --auth alice --json   # use a password the user chose
+```
+
+- Give the user the `url`, the user name and the password. `auth_password` only appears when qd generated
+  it, and qd doesn't store it anywhere, so this is the only time it can be shown. If the deploy fails after
+  that, the generated password is also on stderr (`basic auth: user ..., generated password ...`); pass it on,
+  since the credential is already stored on the server.
+- Pass a password the user chose through `QD_AUTH_PASSWORD`, not `--auth user:pass`: command lines end up in
+  shell history and process lists. Don't make up passwords yourself; let qd generate one.
+- Redeploys keep the credential (`"auth"` in the result shows the user). Unless `QD_AUTH_PASSWORD` holds the
+  password, qd can't check whether the site answers, so `reachable` is `null` and there's a warning. That's
+  expected, not a failure.
+- `--auth` again replaces the credential. `--public` removes it.
+- Exit 2 with "has basic auth ... pass --auth or --public" means a `--force` takeover or a lost credential. Ask
+  the user which they want; don't pick `--public` yourself.
+
 ## Choosing the service and port
 
 For compose projects, without `--service` qd picks: the only service, else the only one that isn't a
@@ -129,7 +155,7 @@ If the guess is wrong, the result's `service`/`port` will show it; redeploy with
 ## Other commands
 
 ```sh
-qd ls --json                          # {"apps": [{"name", "url", "status", "source", "source_host", ...}]}
+qd ls --json                          # {"apps": [{"name", "url", "status", "auth", "source", ...}]}
 qd logs NAME --tail 200 [-s SERVICE]  # raw text even with --json; don't use -f (it never exits)
 qd rm NAME --json                     # stop and delete a deployment and its images
 qd rm NAME --volumes --json           # ...and its named volumes (deletes data)
@@ -142,8 +168,9 @@ deployment, and never add `--volumes` without explicit confirmation.**
 
 ## Things to tell the user when relevant
 
-- Deployed sites are **public** to anyone with the URL. If the project has no auth and exposes anything
-  sensitive, say so; they can put Cloudflare Access in front of the hostname.
+- Deployed sites are **public** to anyone with the URL unless deployed with `--auth`. If the project has no
+  auth of its own and exposes anything sensitive, say so and offer `--auth`. For per-person logins or SSO
+  they can put Cloudflare Access in front of the hostname instead.
 - Only one subdomain level works (`x.example.com`, not `a.b.example.com`).
 - On SELinux servers (Fedora, RHEL), bind mounts in the compose file may need a `:z` suffix if the container
   gets permission errors.

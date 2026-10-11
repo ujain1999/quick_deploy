@@ -12,10 +12,12 @@ import os
 import socket
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 from quick_deploy import __version__
+from quick_deploy.auth import Auth, new_auth, stored_auth
 from quick_deploy.cloudflare import TRAEFIK_SERVICE, Cloudflare
 from quick_deploy.config import Config
 from quick_deploy.errors import ERROR, NOT_FOUND, OK, UNREACHABLE, USAGE, QDError
@@ -34,6 +36,7 @@ from quick_deploy.remote import Remote, heredoc, shq
 from quick_deploy.server import (
     MIN_COMPOSE,
     TRAEFIK_404,
+    App,
     bootstrap,
     docker_hint,
     list_apps,
@@ -52,6 +55,7 @@ typical flow:
   qd setup --host me@homeserver.local --domain example.com   # once (needs CLOUDFLARE_API_TOKEN)
   qd deploy                                                # deploy ./ at a random name, prints URL
   qd deploy ~/code/blog --name blog                        # https://blog.example.com
+  qd deploy --auth alice                                   # behind basic auth, password generated
   qd ls --json
 """
 
@@ -134,7 +138,7 @@ def wait_until_tunnel(domain: str, timeout: float) -> tuple[bool, int | None]:
     url = f"https://qd-probe-{random_name().replace('-', '')[:20]}.{domain}/"
     deadline = time.monotonic() + timeout
     while True:
-        status, body = probe(url)
+        status, body, _ = probe(url)
         if status == 404 and body.strip() == TRAEFIK_404:
             return True, status
         if time.monotonic() >= deadline:
@@ -143,6 +147,32 @@ def wait_until_tunnel(domain: str, timeout: float) -> tuple[bool, int | None]:
 
 
 # --- deploy -------------------------------------------------------------------
+
+
+def deploy_auth(
+    spec: str | None,
+    public: bool,
+    prev: App | None,
+    owner_changed: bool,
+    read_stored: Callable[[], str],
+    env_password: str | None,
+) -> Auth | None:
+    """Basic auth for this deploy. Public unless asked; a redeploy keeps earlier auth until --public."""
+    if public:
+        return None
+    if spec is not None:
+        return new_auth(spec, env_password)
+    if not (prev and prev.auth):
+        return None
+    # Never let a deploy quietly make a private site public, or lock a new owner out with a password they don't know.
+    if owner_changed:
+        raise QDError(
+            f"{prev.name} has basic auth set from {prev.source_host}:{prev.source}; pass --auth or --public", USAGE
+        )
+    stored = read_stored().strip()
+    if not stored:
+        raise QDError(f"{prev.name} has basic auth but its credential is gone from the server; pass --auth or --public")
+    return stored_auth(stored, env_password)
 
 
 def cmd_deploy(a: argparse.Namespace) -> int:
@@ -175,6 +205,23 @@ def cmd_deploy(a: argparse.Namespace) -> int:
     log(f"{'redeploying' if redeploy else 'deploying'} {src} -> {url} ({proj.mode}: {proj.file})")
 
     warnings: list[str] = []
+    prev = apps.get(name)
+    auth = deploy_auth(
+        a.auth,
+        a.public,
+        prev,
+        bool(prev) and (prev.source, prev.source_host) != (str(src), host),
+        lambda: r.output(f'cat "$QD/apps/{name}/htpasswd" 2>/dev/null || true'),
+        os.environ.get("QD_AUTH_PASSWORD"),
+    )
+    htpasswd = auth.htpasswd if auth else None
+    if auth and a.auth is None:
+        log(f"keeping basic auth for user {auth.user!r} (pass --public to remove it)")
+    elif a.public and prev and prev.auth:
+        log("removing basic auth: the site will be public")
+    if auth and auth.generated:
+        # Shown before building, so it isn't lost if the build fails after the credential is stored.
+        log(f"basic auth: user {auth.user!r}, generated password {auth.password}")
     r.run(f'mkdir -p "$QD/apps/{name}/src"')
     log("syncing files ...")
     r.sync(src, f".qd/apps/{name}/src")
@@ -192,15 +239,17 @@ def cmd_deploy(a: argparse.Namespace) -> int:
             warnings.append(
                 f"service {t!r} runs its own Cloudflare tunnel; qd already routes {url}, so you may not need it"
             )
+        if auth and a.keep_ports and any(spec.get("ports") for spec in services.values()):
+            warnings.append("--keep-ports publishes host ports that bypass basic auth")
         generated = "qd.override.yml"
-        content = compose_override(services, service, port, name, cfg.domain, a.keep_ports)
+        content = compose_override(services, service, port, name, cfg.domain, a.keep_ports, htpasswd)
         files = [f"src/{proj.file}", generated]
     else:
         port = a.port or proj.exposed_port
         if not port:
             raise QDError(f"no EXPOSE in {proj.file}; pass --port", USAGE)
         service, generated = "app", "qd.compose.yml"
-        content = dockerfile_compose(name, cfg.domain, proj.file, port)
+        content = dockerfile_compose(name, cfg.domain, proj.file, port, htpasswd)
         files = [generated]
 
     meta = {
@@ -212,23 +261,35 @@ def cmd_deploy(a: argparse.Namespace) -> int:
         "service": service,
         "port": port,
         "deployed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "auth": auth.user if auth else None,
     }
+    can_probe = not auth or auth.password is not None
+    if a.wait > 0 and not can_probe:
+        warnings.append(
+            "can't check the site behind basic auth without its password; set QD_AUTH_PASSWORD or pass --auth to check it"
+        )
     for w in warnings:
         log(f"warning: {w}")
     log(f"building and starting on the server (service {service!r}, port {port}) ...")
     fargs = " ".join(f"-f {shq(f)}" for f in files)
     r.run(
         f'cd "$QD/apps/{name}"\n'
+        # These hold the password hash. umask only applies to new files, hence the rm.
+        + f"rm -f {shq(generated)} htpasswd\n(umask 077\n"
         + heredoc(generated, content)
+        + (heredoc("htpasswd", htpasswd) if htpasswd else "")
+        + ")\n"
         + heredoc("meta.json", json.dumps(meta))
         + f"docker compose -p qd-{name} {fargs} up -d --build --remove-orphans\n",
     )
 
     reachable, status = None, None
-    if a.wait > 0:
+    if a.wait > 0 and can_probe:
         log(f"waiting up to {a.wait}s for {url} ...")
-        reachable, status = wait_until_up(url, a.wait)
+        reachable, status = wait_until_up(url, a.wait, (auth.user, auth.password) if auth else None)
     result = {**meta, "ok": True, "redeploy": redeploy, "reachable": reachable, "http_status": status, "warnings": warnings}
+    if auth and auth.generated:
+        result["auth_password"] = auth.password
     emit(result, url)
     if reachable is False:
         log(f"warning: deployed, but {url} isn't answering yet (last status {status}). Check: qd logs {name}")
@@ -242,8 +303,9 @@ def cmd_deploy(a: argparse.Namespace) -> int:
 def cmd_ls(a: argparse.Namespace) -> int:
     cfg = Config.load().require()
     apps = sorted(list_apps(Remote(cfg)).values(), key=lambda x: x.deployed_at or "", reverse=True)
-    rows = [("NAME", "STATUS", "URL", "SOURCE", "DEPLOYED")] + [
-        (x.name, x.status, x.url, f"{x.source_host}:{x.source}", (x.deployed_at or "")[:16]) for x in apps
+    rows = [("NAME", "STATUS", "URL", "ACCESS", "SOURCE", "DEPLOYED")] + [
+        (x.name, x.status, x.url, f"auth:{x.auth}" if x.auth else "public", f"{x.source_host}:{x.source}", (x.deployed_at or "")[:16])
+        for x in apps
     ]
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     table = "\n".join("  ".join(c.ljust(w) for c, w in zip(row, widths)).rstrip() for row in rows)
@@ -399,6 +461,14 @@ def build_parser() -> Parser:
     d.add_argument("--force", action="store_true", help="take over a name used by another directory")
     d.add_argument("--keep-ports", action="store_true", help="keep host port mappings from the compose file")
     d.add_argument("--wait", type=int, default=90, metavar="SECONDS", help="wait for the URL to answer (0 = don't; default 90)")
+    access = d.add_mutually_exclusive_group()
+    access.add_argument(
+        "--auth",
+        metavar="USER[:PASSWORD]",
+        help="require HTTP basic auth; without PASSWORD, uses $QD_AUTH_PASSWORD or generates and prints one. "
+        "Redeploys keep it",
+    )
+    access.add_argument("--public", action="store_true", help="remove basic auth set by an earlier deploy")
     d.set_defaults(func=cmd_deploy)
 
     sub.add_parser("ls", aliases=["list"], help="list deployments").set_defaults(func=cmd_ls)
